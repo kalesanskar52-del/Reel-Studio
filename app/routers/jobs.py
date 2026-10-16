@@ -5,8 +5,8 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import FileResponse
 from app.config import settings
-from app.db import connect
-from app.schemas import RecordingJobRequest, ExplainerJobRequest, RenderRequest
+from app.db import connect, now
+from app.schemas import RecordingJobRequest, ExplainerJobRequest, RenderRequest, TranscriptEdit
 from app.services.jobs import create_job, get_job, list_jobs
 from app.services.jobs import set_job_status
 from app.services.cancellation import cancel_job
@@ -91,6 +91,29 @@ def get_one_job(job_id: str):
     if not job:
         raise HTTPException(404, "Job not found")
     return job
+
+
+@router.patch("/jobs/{job_id}/transcript")
+def edit_job_transcript(job_id: str, body: TranscriptEdit):
+    with connect() as db:
+        row = db.execute("SELECT kind,status,result_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Job not found")
+        if row["kind"] != "recording_highlights":
+            raise HTTPException(409, "Only class recording transcripts can be edited")
+        if row["status"] in {"queued", "processing"}:
+            raise HTTPException(409, "Wait for recording processing to finish before saving transcript edits")
+        result = json.loads(row["result_json"] or "{}")
+        if "transcript_text" not in result:
+            raise HTTPException(409, "This recording does not have a transcript to edit")
+        result["transcript_text"] = body.transcript_text
+        changed = db.execute(
+            "UPDATE jobs SET result_json=?,updated_at=? WHERE id=? AND status NOT IN ('queued','processing')",
+            (json.dumps(result, ensure_ascii=False), now(), job_id),
+        ).rowcount
+        if not changed:
+            raise HTTPException(409, "Recording processing has not finished; try saving again shortly")
+    return get_job(job_id)
 
 
 @router.post("/jobs/{job_id}/cancel")

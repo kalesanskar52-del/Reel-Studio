@@ -172,7 +172,8 @@ def render_recording_clip(source: str, output: Path, start: float, end: float, t
     crop_x = f"max(0,min(iw-ih*9/16,{x_expr}))".replace(",", r"\,")
     crop_width = r"min(iw\,ih*9/16)"
     ass_file = output.with_suffix(".ass")
-    _write_clip_ass(words or [], ass_file, start, end, title, ((brand or {}).get("name") or "").strip(), accent)
+    caption_font = (brand or {}).get("caption_style", {}).get("font", "Arial")
+    _write_clip_ass(words or [], ass_file, start, end, title, ((brand or {}).get("name") or "").strip(), accent, caption_font)
     filters = [f"crop=w='{crop_width}':h=ih:x='{crop_x}':y=0", "scale=720:1280:force_original_aspect_ratio=increase", "crop=720:1280", f"subtitles='{_subtitle_path(ass_file)}'"]
     logo = (brand or {}).get("logo_path")
     has_logo = bool(logo and Path(logo).is_file())
@@ -217,15 +218,17 @@ def _ass_color(value: str) -> str:
     return f"&H00{rgb[4:6]}{rgb[2:4]}{rgb[0:2].upper()}"
 
 
-def _ass_header(accent: str) -> list[str]:
+def _ass_header(accent: str, caption_font: str = "Arial") -> list[str]:
     theme_color = _ass_color("#B9F66A")
     caption_color = _ass_color(accent)
+    if caption_font not in {"Arial", "Trebuchet MS", "Courier New"}:
+        caption_font = "Arial"
     return [
         "[Script Info]", "ScriptType: v4.00+", "PlayResX: 720", "PlayResY: 1280", "WrapStyle: 2", "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Default,Arial,40,&H00FFFFFF,&H00FFFFFF,&H80000000,&H90000000,1,0,1,2,0,2,36,36,120,1",
-        f"Style: Caption,Arial,40,{caption_color},&H00FFFFFF,&H80000000,&H90000000,1,0,1,2,0,2,36,36,120,1",
+        f"Style: Caption,{caption_font},40,{caption_color},&H00FFFFFF,&H80000000,&H90000000,1,0,1,2,0,2,36,36,120,1",
         f"Style: Title,Arial,32,{theme_color},&H00FFFFFF,&H80000000,&H90000000,1,0,1,2,0,8,40,40,70,1",
         f"Style: Brand,Arial,23,{theme_color},&H00FFFFFF,&H80000000,&H90000000,1,0,1,2,0,3,30,30,48,1",
         f"Style: Scene,Arial,38,&H00FFFFFF,&H00FFFFFF,&H80000000,&H90000000,1,0,1,2,0,7,54,54,310,1",
@@ -235,9 +238,9 @@ def _ass_header(accent: str) -> list[str]:
 
 
 def _write_clip_ass(words: list[dict[str, Any]], destination: Path, start: float, end: float,
-                    title: str, brand_name: str, accent: str) -> None:
+                    title: str, brand_name: str, accent: str, caption_font: str = "Arial") -> None:
     duration = max(0.1, end - start)
-    lines = _ass_header(accent)
+    lines = _ass_header(accent, caption_font)
     lines.append(f"Dialogue: 0,0:00:00.00,0:00:05.00,Title,,0,0,0,,{_ass_escape(title[:100])}")
     if brand_name:
         lines.append(f"Dialogue: 0,0:00:00.00,{_ass_stamp(duration)},Brand,,0,0,0,,{_ass_escape(brand_name[:40])}")
@@ -270,8 +273,9 @@ def _subtitle_path(path: Path) -> str:
 
 
 def _write_explainer_ass(captions: list[dict[str, Any]], scenes: list[dict[str, Any]], title: str,
-                         brand_name: str, destination: Path, duration: float, accent: str) -> None:
-    lines = _ass_header(accent)
+                         brand_name: str, destination: Path, duration: float, accent: str,
+                         caption_font: str = "Arial") -> None:
+    lines = _ass_header(accent, caption_font)
     lines.append(f"Dialogue: 0,0:00:00.00,{_ass_stamp(min(duration, 5))},Title,,0,0,0,,{_ass_escape(title[:100])}")
     if brand_name:
         lines.append(f"Dialogue: 0,0:00:00.00,{_ass_stamp(duration)},Brand,,0,0,0,,{_ass_escape(brand_name[:40])}")
@@ -309,7 +313,8 @@ def render_explainer(scenes: list[dict[str, Any]], captions: list[dict[str, Any]
     if len(accent) != 6:
         accent = "B9F66A"
     subtitle_file = output.with_suffix(".ass")
-    _write_explainer_ass(captions, scenes, title, ((brand or {}).get("name") or "").strip(), subtitle_file, float(duration), accent)
+    caption_font = (brand or {}).get("caption_style", {}).get("font", "Arial")
+    _write_explainer_ass(captions, scenes, title, ((brand or {}).get("name") or "").strip(), subtitle_file, float(duration), accent, caption_font)
     filters = [f"subtitles='{_subtitle_path(subtitle_file)}'"]
     args = [ffmpeg_path(), "-y", "-f", "lavfi", "-i", f"color=c=0x101512:s=720x1280:r=30:d={duration}"]
     audio_index = None

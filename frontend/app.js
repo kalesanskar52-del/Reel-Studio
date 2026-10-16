@@ -118,7 +118,10 @@ async function openJob(id) {
     if (Object.keys(result).length) {
       content += `<div class="detail-callout"><b>${result.demo ? 'SAMPLE OUTPUT' : 'GENERATED OUTPUT'}</b><br>${esc(result.message || '')}</div>`;
       if (result.audio_note) content += `<div class="detail-callout">${esc(result.audio_note)}</div>`;
-      if (result.transcript_text) content += `<details class="transcript-view"><summary>View local transcript</summary><pre>${esc(result.transcript_text)}</pre></details>`;
+      if (result.transcript_text) {
+        const transcriptLocked = ['queued','processing'].includes(job.status);
+        content += `<section class="transcript-editor"><div class="transcript-heading"><div><b>Generated transcript</b><small>Local speech recognition · editable text</small></div><button class="save-transcript" data-job="${esc(job.id)}" type="button" ${transcriptLocked ? 'disabled' : ''}>Save changes</button></div><textarea class="transcript-input" aria-label="Edit generated transcript" ${transcriptLocked ? 'disabled' : ''}>${esc(result.transcript_text)}</textarea><div class="transcript-note">${transcriptLocked ? 'Editing becomes available after processing finishes.' : 'Edits are saved with this project. Original timing and clip boundaries stay unchanged.'}</div></section>`;
+      }
       if (result.script) content += `<div class="detail-callout"><b>Generated script</b><br>${esc(result.script)}</div>`;
       if (result.scenes) content += result.scenes.map(scene => `<div class="scene"><time>${Number(scene.at_seconds).toString().padStart(2,'0')}s</time><div><b>${esc(scene.text)}</b>${scene.code ? `<code>${esc(scene.code)}</code>` : ''}</div></div>`).join('');
       if (result.output_path) content += `<video controls playsinline style="width:100%;max-height:55vh;margin-top:16px;border-radius:10px;background:#090c0a" src="${API}/jobs/${encodeURIComponent(id)}/download"></video><a class="secondary-button" style="display:inline-flex;align-items:center;text-decoration:none;margin-top:10px" href="${API}/jobs/${encodeURIComponent(id)}/download" download>Download MP4</a>`;
@@ -129,6 +132,15 @@ async function openJob(id) {
       content += clips.map(clip => `<div class="detail-callout"><b>${esc(clip.title)}</b><br>${Number(clip.start_seconds).toFixed(1)}s – ${Number(clip.end_seconds).toFixed(1)}s<br>${esc(clip.transcript || '')}</div><div class="clip-edit"><label>Start (s)<input class="clip-start" data-clip="${esc(clip.id)}" type="number" min="0" step="0.1" value="${clip.start_seconds}"></label><label>End (s)<input class="clip-end" data-clip="${esc(clip.id)}" type="number" min="0" step="0.1" value="${clip.end_seconds}"></label><button class="save-clip" data-clip="${esc(clip.id)}">Save edit</button><button class="render-clip" data-clip="${esc(clip.id)}">Render MP4</button></div>`).join('');
     }
     detail.innerHTML = content; if (!$('#job-dialog').open) $('#job-dialog').showModal();
+    detail.querySelector('.save-transcript')?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      const transcriptText = detail.querySelector('.transcript-input').value;
+      button.disabled = true; button.textContent = 'Saving…';
+      try {
+        await request(`/jobs/${encodeURIComponent(button.dataset.job)}/transcript`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({transcript_text:transcriptText})});
+        toast('Transcript edits saved to this project.'); button.textContent = 'Saved ✓';
+      } catch (error) { toast(error.message); button.disabled = false; button.textContent = 'Save changes'; }
+    });
     detail.querySelector('.cancel-job')?.addEventListener('click', async event => {
       const button = event.currentTarget; button.disabled = true; button.textContent = 'Cancelling…';
       try { await request(`/jobs/${encodeURIComponent(button.dataset.job)}/cancel`, {method:'POST'}); toast('Processing cancelled.'); await loadJobs(); openJob(button.dataset.job); }
@@ -163,11 +175,20 @@ async function openJob(id) {
 $('dialog form').addEventListener('submit', () => $('#job-dialog').close());
 
 $('#brand-name').addEventListener('input', () => { $('#brand-preview-name').textContent = $('#brand-name').value || 'Your brand'; $('#brand-preview-logo').textContent = ($('#brand-name').value.trim()[0] || 'R').toUpperCase(); });
-$('#brand-color').addEventListener('input', event => { $('#brand-colors').textContent = `${event.target.value.toUpperCase()} · CAPTION COLOR`; document.documentElement.style.setProperty('--caption-color', event.target.value); });
+function updateCaptionPreview() {
+  const color = $('#brand-color').value;
+  const font = $('#brand-font').value;
+  $('#brand-colors').textContent = `${color.toUpperCase()} · ${font}`;
+  document.documentElement.style.setProperty('--caption-color', color);
+  document.documentElement.style.setProperty('--caption-font', `'${font}'`);
+}
+$('#brand-color').addEventListener('input', updateCaptionPreview);
+$('#brand-font').addEventListener('change', updateCaptionPreview);
+updateCaptionPreview();
 async function saveBrand(showToast = true) {
   const name = $('#brand-name').value.trim(); if (!name) return toast('Add a brand name.');
   const color = $('#brand-color').value;
-  const body = {name,colors:{primary:color,background:'#101512'},fonts:{heading:'Manrope',body:'DM Sans'},caption_style:{accent:color},...brandAssetIds};
+  const body = {name,colors:{primary:color,background:'#101512'},fonts:{heading:'Manrope',body:'DM Sans'},caption_style:{accent:color,font:$('#brand-font').value},...brandAssetIds};
   try {
     const saved = knownBrandId ? await request(`/brands/${encodeURIComponent(knownBrandId)}`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}) : await request('/brands', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     knownBrandId = saved.id; if (showToast) toast('Brand kit saved to the backend.');
@@ -218,6 +239,10 @@ request('/brands').then(brands => {
   const brand = brands[0]; knownBrandId = brand.id; $('#brand-name').value = brand.name; $('#brand-preview-name').textContent = brand.name;
   brandAssetIds = {logo_asset_id:brand.logo_asset_id || null,intro_asset_id:brand.intro_asset_id || null,outro_asset_id:brand.outro_asset_id || null};
   $('#brand-preview-logo').textContent = (brand.name[0] || 'R').toUpperCase();
-  const color = brand.caption_style?.accent || brand.colors?.primary || '#b9f66a'; $('#brand-color').value = color; $('#brand-colors').textContent = `${color.toUpperCase()} · CAPTION COLOR`; document.documentElement.style.setProperty('--caption-color', color);
+  const color = brand.caption_style?.accent || brand.colors?.primary || '#b9f66a';
+  const availableFonts = ['Arial','Trebuchet MS','Courier New'];
+  $('#brand-color').value = color;
+  $('#brand-font').value = availableFonts.includes(brand.caption_style?.font) ? brand.caption_style.font : 'Arial';
+  updateCaptionPreview();
 }).catch(() => {});
 setInterval(loadJobs, 12000);

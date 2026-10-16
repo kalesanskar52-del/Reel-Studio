@@ -46,3 +46,7 @@ class RenderRequest(BaseModel):
     resolution: Literal["1080x1920", "720x1280"] = "1080x1920"
     brand_id: str | None = None
     caption_style: dict[str, Any] = Field(default_factory=dict)
+
+
+class TranscriptEdit(BaseModel):
+    transcript_text: str = Field(max_length=2_000_000)
